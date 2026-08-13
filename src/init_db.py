@@ -3,7 +3,9 @@ import yaml
 from sqlalchemy import create_engine, text
 
 CONFIG_FILE = "/etc/energydash-pro/config.yaml"
-SCHEMA_FILE = "/opt/energydash-pro/01_schema.sql"
+
+BASE_DIR = pathlib.Path(__file__).resolve().parent
+SCHEMA_FILE = BASE_DIR / "database" / "01_schema.sql"
 
 def load_config():
     with open(CONFIG_FILE, "r") as f:

@@ -2,13 +2,14 @@
 set -euo pipefail
 
 cd /opt/energydash-pro
-cp config.yaml /etc/energydash-pro/config.yaml
+cp config/config.yaml /etc/energydash-pro/config.yaml
 chown root:energydash /etc/energydash-pro/config.yaml
 chmod 640 /etc/energydash-pro/config.yaml
 
 ./venv/bin/python init_db.py
 bash systemd_units.sh
-cp nginx_energydash.conf /etc/nginx/sites-available/energydash-pro.conf
+cp config/nginx_energydash.conf \
+   /etc/nginx/sites-available/energydash-pro.conf
 ln -sf /etc/nginx/sites-available/energydash-pro.conf /etc/nginx/sites-enabled/energydash-pro.conf
 nginx -t
 systemctl reload nginx

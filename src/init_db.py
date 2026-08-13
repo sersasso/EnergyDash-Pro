@@ -2,7 +2,7 @@ import pathlib
 import yaml
 from sqlalchemy import create_engine, text
 
-CONFIG_FILE = "/etc/energydash-pro/config.yaml"
+CONFIG_FILE = "/etc/energydash-pro/config/config.yaml"
 
 BASE_DIR = pathlib.Path(__file__).resolve().parent
 SCHEMA_FILE = BASE_DIR / "database" / "01_schema.sql"

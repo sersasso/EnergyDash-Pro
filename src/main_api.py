@@ -4,7 +4,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import create_engine, text
 
-CONFIG_FILE = "/etc/energydash-pro/config.yaml"
+CONFIG_FILE = "/etc/energydash-pro/config/config.yaml"
 
 def load_config():
     with open(CONFIG_FILE, "r") as f:

@@ -19,7 +19,7 @@ apt install -y python3 python3-venv python3-pip python3-dev build-essential \
 id -u "$APP_USER" >/dev/null 2>&1 || useradd --system --home "$APP_HOME" --shell /usr/sbin/nologin "$APP_USER"
 mkdir -p "$APP_HOME" "$APP_ETC" "$APP_DATA"/reports "$APP_DATA"/backup "$APP_DATA"/import/metern "$APP_LOG"
 chown -R "$APP_USER":"$APP_USER" "$APP_HOME" "$APP_DATA" "$APP_LOG"
-chmod 750 "$APP_ETC" "$APP_DATA" "$APP_LOG"
+chmod 755 "$APP_ETC" "$APP_DATA" "$APP_LOG"
 # Determine repository location
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(dirname "$SCRIPT_DIR")"

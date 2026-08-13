@@ -7,7 +7,7 @@ from dash import Dash, dcc, html, Input, Output
 import dash_bootstrap_components as dbc
 from sqlalchemy import create_engine, text
 
-CONFIG_FILE = "/etc/energydash-pro/config.yaml"
+CONFIG_FILE = "/etc/energydash-pro/config/config.yaml"
 
 def load_config():
     with open(CONFIG_FILE, "r") as f:

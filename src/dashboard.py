@@ -18,47 +18,12 @@ def load_config():
 
 cfg = load_config()
 engine = create_engine(cfg["database"]["url"], pool_pre_ping=True, future=True)
-
 LOCAL_TZ = ZoneInfo(cfg.get("app", {}).get("timezone", "Europe/Rome"))
 
 
-def gauge_config():
-    default_cfg = {
-        "export_max_w": 6000,
-        "import_warning_w": 3000,
-        "import_max_w": 6000,
-        "height": 330,
-        "title": "Scambio rete",
-    }
-
-    default_cfg.update(cfg.get("gauge", {}))
-    return default_cfg
-
-
-def chart_config():
-    default_cfg = {
-        "hours": 24,
-        "resample_seconds": 60,
-        "colors": {
-            "produzione": "#4C6FFF",
-            "consumo": "#FF4B3E",
-            "autoconsumo": "#00C896",
-            "immissione": "#B36BFF",
-            "prelievo": "#FF9F43",
-        },
-    }
-
-    user_cfg = cfg.get("chart", {})
-
-    if "colors" in user_cfg:
-        default_cfg["colors"].update(user_cfg.get("colors", {}))
-
-    for key, value in user_cfg.items():
-        if key != "colors":
-            default_cfg[key] = value
-
-    return default_cfg
-
+# ---------------------------------------------------------------------
+# Generic formatting
+# ---------------------------------------------------------------------
 
 def format_watt(value):
     if value is None or pd.isna(value):
@@ -108,6 +73,140 @@ def format_rssi(value):
     return f"{value} dBm"
 
 
+# ---------------------------------------------------------------------
+# Settings persistence
+# ---------------------------------------------------------------------
+
+def setting_get(key, default=None, value_type="string"):
+    try:
+        with engine.begin() as conn:
+            row = conn.execute(
+                text("SELECT value,value_type FROM settings WHERE key=:key"),
+                {"key": key},
+            ).mappings().first()
+
+        if not row:
+            return default
+
+        value = row["value"]
+        detected_type = row["value_type"] or value_type
+
+        if detected_type == "int":
+            return int(value)
+        if detected_type == "float":
+            return float(value)
+        if detected_type == "bool":
+            return str(value).lower() in ("1", "true", "yes", "on")
+
+        return value
+    except Exception:
+        return default
+
+
+def setting_put(key, value, value_type="string", description=None):
+    sql = text("""
+        INSERT INTO settings(key,value,value_type,description,updated_at,updated_by)
+        VALUES(:key,:value,:value_type,:description,now(),'dashboard')
+        ON CONFLICT(key) DO UPDATE SET
+            value=EXCLUDED.value,
+            value_type=EXCLUDED.value_type,
+            description=EXCLUDED.description,
+            updated_at=now(),
+            updated_by='dashboard'
+    """)
+
+    with engine.begin() as conn:
+        conn.execute(
+            sql,
+            {
+                "key": key,
+                "value": str(value),
+                "value_type": value_type,
+                "description": description,
+            },
+        )
+
+
+def valid_hex(value):
+    if not isinstance(value, str):
+        return False
+
+    value = value.strip()
+
+    if len(value) != 7:
+        return False
+
+    if not value.startswith("#"):
+        return False
+
+    try:
+        int(value[1:], 16)
+        return True
+    except ValueError:
+        return False
+
+
+# ---------------------------------------------------------------------
+# Runtime configuration
+# ---------------------------------------------------------------------
+
+def gauge_config():
+    default_cfg = {
+        "export_max_w": 6000,
+        "import_warning_w": 3000,
+        "import_max_w": 6000,
+        "height": 330,
+        "title": "Scambio rete",
+    }
+
+    default_cfg.update(cfg.get("gauge", {}))
+
+    return {
+        "export_max_w": setting_get("gauge.export_max_w", default_cfg["export_max_w"], "float"),
+        "import_warning_w": setting_get("gauge.import_warning_w", default_cfg["import_warning_w"], "float"),
+        "import_max_w": setting_get("gauge.import_max_w", default_cfg["import_max_w"], "float"),
+        "height": setting_get("gauge.height", default_cfg["height"], "int"),
+        "title": setting_get("gauge.title", default_cfg["title"], "string"),
+    }
+
+
+def chart_config():
+    default_cfg = {
+        "hours": 24,
+        "resample_seconds": 60,
+        "colors": {
+            "produzione": "#4C6FFF",
+            "consumo": "#FF4B3E",
+            "autoconsumo": "#00C896",
+            "immissione": "#B36BFF",
+            "prelievo": "#FF9F43",
+        },
+    }
+
+    user_cfg = cfg.get("chart", {})
+
+    if "colors" in user_cfg:
+        default_cfg["colors"].update(user_cfg.get("colors", {}))
+
+    for key, value in user_cfg.items():
+        if key != "colors":
+            default_cfg[key] = value
+
+    colors = default_cfg["colors"]
+
+    return {
+        "hours": setting_get("chart.hours", default_cfg["hours"], "float"),
+        "resample_seconds": setting_get("chart.resample_seconds", default_cfg["resample_seconds"], "int"),
+        "colors": {
+            "produzione": setting_get("chart.color.produzione", colors["produzione"], "string"),
+            "consumo": setting_get("chart.color.consumo", colors["consumo"], "string"),
+            "autoconsumo": setting_get("chart.color.autoconsumo", colors["autoconsumo"], "string"),
+            "immissione": setting_get("chart.color.immissione", colors["immissione"], "string"),
+            "prelievo": setting_get("chart.color.prelievo", colors["prelievo"], "string"),
+        },
+    }
+
+
 def load_chart_settings():
     default = {
         "production_wh": {"label": "Produzione", "color": "#4C6FFF"},
@@ -136,6 +235,10 @@ def load_chart_settings():
     except Exception:
         return default
 
+
+# ---------------------------------------------------------------------
+# Data loaders
+# ---------------------------------------------------------------------
 
 def load_live_recent():
     live_cfg = chart_config()
@@ -212,6 +315,10 @@ def load_daily(days=3650):
 
     return df
 
+
+# ---------------------------------------------------------------------
+# Figure builders
+# ---------------------------------------------------------------------
 
 def make_card(title, value, subtitle, colour="primary"):
     return dbc.Card(
@@ -453,6 +560,10 @@ def make_power_chart(df):
     return fig
 
 
+# ---------------------------------------------------------------------
+# Layout
+# ---------------------------------------------------------------------
+
 def sidebar():
     return dbc.Col(
         dbc.Nav(
@@ -522,7 +633,7 @@ def live_layout():
     return html.Div(
         [
             html.H2("Live monitoring"),
-            html.Div("Vista live migliorata con gauge rete, KPI e dettaglio ultimo campione.", className="text-muted mb-3"),
+            html.Div("Vista live con gauge rete, KPI e dettaglio ultimo campione.", className="text-muted mb-3"),
 
             dbc.Row(
                 [
@@ -625,6 +736,155 @@ def storico_layout():
     )
 
 
+def config_input(label, input_id, value, input_type="text", min_value=None, max_value=None, step=None, help_text=None):
+    return dbc.Col(
+        [
+            dbc.Label(label),
+            dbc.Input(
+                id=input_id,
+                type=input_type,
+                value=value,
+                min=min_value,
+                max=max_value,
+                step=step,
+            ),
+            html.Div(help_text or "", className="small text-muted mt-1"),
+        ],
+        md=4,
+        className="mb-3",
+    )
+
+
+def config_layout():
+    cc = chart_config()
+    gc = gauge_config()
+    colors = cc.get("colors", {})
+
+    return html.Div(
+        [
+            html.H2("Configurazione"),
+            html.Div(
+                "Modifica i parametri principali della dashboard live. I valori vengono salvati nel database nella tabella settings.",
+                className="text-muted mb-3",
+            ),
+
+            dbc.Alert(
+                "Nota: queste impostazioni controllano la dashboard web. Le configurazioni tecniche di Shelly, database e servizi restano nel file config.yaml.",
+                color="info",
+                className="py-2",
+            ),
+
+            html.Div(id="config-save-alert"),
+
+            dbc.Card(
+                dbc.CardBody(
+                    [
+                        html.H4("Grafico live", className="mb-3"),
+                        dbc.Row(
+                            [
+                                config_input(
+                                    "Ore visualizzate",
+                                    "cfg-chart-hours",
+                                    cc.get("hours", 24),
+                                    "number",
+                                    min_value=0.25,
+                                    max_value=168,
+                                    step=0.25,
+                                    help_text="Esempio: 24 per ultime 24 ore, 6 per ultime 6 ore.",
+                                ),
+                                config_input(
+                                    "Media/resampling in secondi",
+                                    "cfg-chart-resample",
+                                    cc.get("resample_seconds", 60),
+                                    "number",
+                                    min_value=0,
+                                    max_value=3600,
+                                    step=5,
+                                    help_text="0 disabilita il resampling. 60 significa media a 1 minuto.",
+                                ),
+                            ]
+                        ),
+                        html.H5("Colori linee live", className="mt-3"),
+                        dbc.Row(
+                            [
+                                config_input("Produzione", "cfg-color-produzione", colors.get("produzione", "#4C6FFF"), "text", help_text="Codice HEX, esempio #4C6FFF."),
+                                config_input("Consumo", "cfg-color-consumo", colors.get("consumo", "#FF4B3E"), "text", help_text="Codice HEX."),
+                                config_input("Autoconsumo", "cfg-color-autoconsumo", colors.get("autoconsumo", "#00C896"), "text", help_text="Codice HEX."),
+                                config_input("Immissione", "cfg-color-immissione", colors.get("immissione", "#B36BFF"), "text", help_text="Codice HEX."),
+                                config_input("Prelievo", "cfg-color-prelievo", colors.get("prelievo", "#FF9F43"), "text", help_text="Codice HEX."),
+                            ]
+                        ),
+                    ]
+                ),
+                className="shadow-sm mb-3",
+            ),
+
+            dbc.Card(
+                dbc.CardBody(
+                    [
+                        html.H4("Gauge scambio rete", className="mb-3"),
+                        dbc.Row(
+                            [
+                                config_input(
+                                    "Titolo gauge",
+                                    "cfg-gauge-title",
+                                    gc.get("title", "Scambio rete"),
+                                    "text",
+                                    help_text="Titolo visualizzato sopra il gauge.",
+                                ),
+                                config_input(
+                                    "Massimo immissione W",
+                                    "cfg-gauge-export-max",
+                                    gc.get("export_max_w", 6000),
+                                    "number",
+                                    min_value=1,
+                                    max_value=50000,
+                                    step=100,
+                                    help_text="Scala negativa del gauge.",
+                                ),
+                                config_input(
+                                    "Soglia prelievo elevato W",
+                                    "cfg-gauge-import-warning",
+                                    gc.get("import_warning_w", 3000),
+                                    "number",
+                                    min_value=1,
+                                    max_value=50000,
+                                    step=100,
+                                    help_text="Da questa soglia il gauge diventa rosso.",
+                                ),
+                                config_input(
+                                    "Massimo prelievo W",
+                                    "cfg-gauge-import-max",
+                                    gc.get("import_max_w", 6000),
+                                    "number",
+                                    min_value=1,
+                                    max_value=50000,
+                                    step=100,
+                                    help_text="Scala positiva del gauge.",
+                                ),
+                                config_input(
+                                    "Altezza gauge px",
+                                    "cfg-gauge-height",
+                                    gc.get("height", 330),
+                                    "number",
+                                    min_value=200,
+                                    max_value=800,
+                                    step=10,
+                                    help_text="Altezza del grafico gauge.",
+                                ),
+                            ]
+                        ),
+                    ]
+                ),
+                className="shadow-sm mb-3",
+            ),
+
+            dbc.Button("Salva configurazione", id="btn-save-config", color="success", className="me-2"),
+            dbc.Button("Vai alla live", href="/live", color="primary", outline=True),
+        ]
+    )
+
+
 def simple_page(title, text):
     return html.Div(
         [
@@ -640,6 +900,10 @@ def simple_page(title, text):
     )
 
 
+# ---------------------------------------------------------------------
+# Routing
+# ---------------------------------------------------------------------
+
 @app.callback(Output("page", "children"), Input("url", "pathname"))
 def route(path):
     if path == "/live":
@@ -649,11 +913,15 @@ def route(path):
     if path == "/report":
         return simple_page("Report", "Qui verranno elencati e generati i report PDF/Excel.")
     if path == "/config":
-        return simple_page("Configurazione", "Qui verranno modificati colori, soglie, tariffe e parametri impianto.")
+        return config_layout()
     if path == "/sistema":
         return simple_page("Sistema", "Health check, servizi, backup e diagnostica.")
     return home_layout()
 
+
+# ---------------------------------------------------------------------
+# Home and live callbacks
+# ---------------------------------------------------------------------
 
 @app.callback(
     Output("home-cards", "children"),
@@ -833,6 +1101,124 @@ def update_live_dashboard(_):
         details,
     )
 
+
+# ---------------------------------------------------------------------
+# Config callback
+# ---------------------------------------------------------------------
+
+@app.callback(
+    Output("config-save-alert", "children"),
+    Input("btn-save-config", "n_clicks"),
+    State("cfg-chart-hours", "value"),
+    State("cfg-chart-resample", "value"),
+    State("cfg-color-produzione", "value"),
+    State("cfg-color-consumo", "value"),
+    State("cfg-color-autoconsumo", "value"),
+    State("cfg-color-immissione", "value"),
+    State("cfg-color-prelievo", "value"),
+    State("cfg-gauge-title", "value"),
+    State("cfg-gauge-export-max", "value"),
+    State("cfg-gauge-import-warning", "value"),
+    State("cfg-gauge-import-max", "value"),
+    State("cfg-gauge-height", "value"),
+    prevent_initial_call=True,
+)
+def save_config(
+    n_clicks,
+    chart_hours,
+    chart_resample,
+    color_produzione,
+    color_consumo,
+    color_autoconsumo,
+    color_immissione,
+    color_prelievo,
+    gauge_title,
+    gauge_export_max,
+    gauge_import_warning,
+    gauge_import_max,
+    gauge_height,
+):
+    errors = []
+
+    color_values = {
+        "chart.color.produzione": color_produzione,
+        "chart.color.consumo": color_consumo,
+        "chart.color.autoconsumo": color_autoconsumo,
+        "chart.color.immissione": color_immissione,
+        "chart.color.prelievo": color_prelievo,
+    }
+
+    for key, value in color_values.items():
+        if not valid_hex(value):
+            errors.append(f"{key}: colore non valido '{value}'. Usa formato #RRGGBB.")
+
+    try:
+        chart_hours = float(chart_hours)
+        if chart_hours <= 0:
+            errors.append("Le ore visualizzate devono essere maggiori di zero.")
+    except Exception:
+        errors.append("Ore visualizzate non valide.")
+
+    try:
+        chart_resample = int(chart_resample)
+        if chart_resample < 0:
+            errors.append("Il resampling non può essere negativo.")
+    except Exception:
+        errors.append("Resampling non valido.")
+
+    numeric_checks = [
+        ("gauge.export_max_w", gauge_export_max),
+        ("gauge.import_warning_w", gauge_import_warning),
+        ("gauge.import_max_w", gauge_import_max),
+        ("gauge.height", gauge_height),
+    ]
+
+    parsed_numbers = {}
+
+    for key, value in numeric_checks:
+        try:
+            parsed_numbers[key] = float(value)
+            if parsed_numbers[key] <= 0:
+                errors.append(f"{key}: deve essere maggiore di zero.")
+        except Exception:
+            errors.append(f"{key}: valore numerico non valido.")
+
+    if errors:
+        return dbc.Alert(
+            [
+                html.H5("Configurazione non salvata"),
+                html.Ul([html.Li(e) for e in errors]),
+            ],
+            color="danger",
+        )
+
+    try:
+        setting_put("chart.hours", chart_hours, "float", "Ore visualizzate nel grafico live")
+        setting_put("chart.resample_seconds", chart_resample, "int", "Secondi di media per il grafico live")
+
+        for key, value in color_values.items():
+            setting_put(key, value.strip(), "string", "Colore HEX dashboard live")
+
+        setting_put("gauge.title", gauge_title or "Scambio rete", "string", "Titolo gauge scambio rete")
+        setting_put("gauge.export_max_w", parsed_numbers["gauge.export_max_w"], "float", "Massimo immissione gauge")
+        setting_put("gauge.import_warning_w", parsed_numbers["gauge.import_warning_w"], "float", "Soglia prelievo elevato gauge")
+        setting_put("gauge.import_max_w", parsed_numbers["gauge.import_max_w"], "float", "Massimo prelievo gauge")
+        setting_put("gauge.height", int(parsed_numbers["gauge.height"]), "int", "Altezza gauge in pixel")
+
+        return dbc.Alert(
+            "Configurazione salvata correttamente. Le modifiche si applicano ai prossimi refresh della dashboard live.",
+            color="success",
+        )
+    except Exception as exc:
+        return dbc.Alert(
+            f"Errore durante il salvataggio: {exc}",
+            color="danger",
+        )
+
+
+# ---------------------------------------------------------------------
+# History callbacks
+# ---------------------------------------------------------------------
 
 @app.callback(
     Output("history-state", "data"),

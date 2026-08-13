@@ -9,7 +9,7 @@ from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, 
 from reportlab.lib.styles import getSampleStyleSheet
 from openpyxl import Workbook
 
-CONFIG_FILE = "/etc/energydash-pro/config.yaml"
+CONFIG_FILE = "/etc/energydash-pro/config/config.yaml"
 
 def load_config():
     with open(CONFIG_FILE, "r") as f:

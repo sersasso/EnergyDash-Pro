@@ -1,5 +1,9 @@
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
+import subprocess
+import shutil
+import platform
+import os
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -560,6 +564,442 @@ def make_power_chart(df):
     return fig
 
 
+
+
+# ---------------------------------------------------------------------
+# System page helpers
+# ---------------------------------------------------------------------
+
+SYSTEM_SERVICES = {
+    "Collector": "energydash-collector.service",
+    "API": "energydash-api.service",
+    "Web Dashboard": "energydash-web.service",
+    "Alert Worker": "energydash-alert.service",
+    "Daily Update Timer": "energydash-daily-update.timer",
+    "Monthly Report Timer": "energydash-report.timer",
+}
+
+
+def run_command(command, timeout=8):
+    try:
+        completed = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+        return {
+            "ok": completed.returncode == 0,
+            "returncode": completed.returncode,
+            "stdout": completed.stdout.strip(),
+            "stderr": completed.stderr.strip(),
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "returncode": -1,
+            "stdout": "",
+            "stderr": str(exc),
+        }
+
+
+def service_status(service_name):
+    active = run_command(["systemctl", "is-active", service_name], timeout=4)
+    enabled = run_command(["systemctl", "is-enabled", service_name], timeout=4)
+
+    active_text = active["stdout"] or "unknown"
+    enabled_text = enabled["stdout"] or "unknown"
+
+    if active_text == "active":
+        colour = "success"
+        label = "Running"
+    elif active_text in ("activating", "reloading"):
+        colour = "warning"
+        label = active_text
+    else:
+        colour = "danger"
+        label = active_text
+
+    return {
+        "service": service_name,
+        "active": active_text,
+        "enabled": enabled_text,
+        "colour": colour,
+        "label": label,
+    }
+
+
+def get_database_health():
+    result = {
+        "last_sample": None,
+        "last_sample_age_seconds": None,
+        "raw_rows": None,
+        "daily_rows": None,
+        "first_day": None,
+        "last_day": None,
+        "error": None,
+    }
+
+    try:
+        with engine.begin() as conn:
+            last = conn.execute(text("SELECT max(ts) FROM measures_raw")).scalar()
+            raw_rows = conn.execute(text("SELECT count(*) FROM measures_raw")).scalar()
+            daily = conn.execute(
+                text("SELECT min(day), max(day), count(*) FROM energy_daily")
+            ).first()
+
+        result["last_sample"] = last
+        result["raw_rows"] = raw_rows
+
+        if daily:
+            result["first_day"] = daily[0]
+            result["last_day"] = daily[1]
+            result["daily_rows"] = daily[2]
+
+        if last:
+            now_utc = datetime.now(timezone.utc)
+            if last.tzinfo is None:
+                age = datetime.utcnow() - last
+            else:
+                age = now_utc.astimezone(last.tzinfo) - last
+            result["last_sample_age_seconds"] = int(age.total_seconds())
+
+    except Exception as exc:
+        result["error"] = str(exc)
+
+    return result
+
+
+def get_disk_health():
+    paths = [
+        "/",
+        "/opt/energydash-pro",
+        "/var/lib/energydash-pro",
+        "/var/log/energydash-pro",
+    ]
+
+    rows = []
+
+    for p in paths:
+        try:
+            if not os.path.exists(p):
+                rows.append({
+                    "path": p,
+                    "total_gb": None,
+                    "used_gb": None,
+                    "free_gb": None,
+                    "used_pct": None,
+                    "error": "path not found",
+                })
+                continue
+
+            usage = shutil.disk_usage(p)
+            total = usage.total / 1024 / 1024 / 1024
+            used = usage.used / 1024 / 1024 / 1024
+            free = usage.free / 1024 / 1024 / 1024
+            used_pct = used / total * 100 if total else 0
+
+            rows.append({
+                "path": p,
+                "total_gb": total,
+                "used_gb": used,
+                "free_gb": free,
+                "used_pct": used_pct,
+                "error": None,
+            })
+
+        except Exception as exc:
+            rows.append({
+                "path": p,
+                "total_gb": None,
+                "used_gb": None,
+                "free_gb": None,
+                "used_pct": None,
+                "error": str(exc),
+            })
+
+    return rows
+
+
+def get_backup_health():
+    backup_dir = "/var/lib/energydash-pro/backup"
+
+    result = {
+        "dir": backup_dir,
+        "exists": os.path.isdir(backup_dir),
+        "count": 0,
+        "total_mb": 0,
+        "latest_file": None,
+        "latest_mtime": None,
+        "error": None,
+    }
+
+    try:
+        if not os.path.isdir(backup_dir):
+            return result
+
+        files = []
+        total = 0
+
+        for entry in os.scandir(backup_dir):
+            if entry.is_file():
+                stat = entry.stat()
+                files.append((entry.path, stat.st_mtime, stat.st_size))
+                total += stat.st_size
+
+        result["count"] = len(files)
+        result["total_mb"] = total / 1024 / 1024
+
+        if files:
+            latest = sorted(files, key=lambda x: x[1], reverse=True)[0]
+            result["latest_file"] = os.path.basename(latest[0])
+            result["latest_mtime"] = datetime.fromtimestamp(latest[1]).strftime("%d/%m/%Y %H:%M:%S")
+
+    except Exception as exc:
+        result["error"] = str(exc)
+
+    return result
+
+
+def get_system_info():
+    load_avg = None
+
+    try:
+        load_avg = os.getloadavg()
+    except Exception:
+        load_avg = None
+
+    uptime = run_command(["uptime", "-p"], timeout=4)
+
+    py_version = platform.python_version()
+    host = platform.node()
+    system = f"{platform.system()} {platform.release()}"
+
+    return {
+        "hostname": host,
+        "system": system,
+        "python": py_version,
+        "uptime": uptime["stdout"] if uptime["ok"] else "n/d",
+        "load_avg": load_avg,
+    }
+
+
+def status_badge(text_value, colour):
+    return dbc.Badge(text_value, color=colour, className="ms-2")
+
+
+def service_table():
+    rows = []
+
+    for label, service in SYSTEM_SERVICES.items():
+        status = service_status(service)
+        rows.append(
+            html.Tr(
+                [
+                    html.Td(label),
+                    html.Td(service),
+                    html.Td(status_badge(status["label"], status["colour"])),
+                    html.Td(status["enabled"]),
+                ]
+            )
+        )
+
+    return dbc.Table(
+        [
+            html.Thead(
+                html.Tr(
+                    [
+                        html.Th("Componente"),
+                        html.Th("Servizio"),
+                        html.Th("Stato"),
+                        html.Th("Enabled"),
+                    ]
+                )
+            ),
+            html.Tbody(rows),
+        ],
+        bordered=True,
+        striped=True,
+        hover=True,
+        responsive=True,
+        className="mb-0",
+    )
+
+
+def database_health_cards():
+    db = get_database_health()
+
+    if db.get("error"):
+        return dbc.Alert(f"Errore lettura database: {db['error']}", color="danger")
+
+    age = db.get("last_sample_age_seconds")
+    if age is None:
+        age_text = "n/d"
+        age_colour = "secondary"
+    elif age < 60:
+        age_text = f"{age}s"
+        age_colour = "success"
+    elif age < 300:
+        age_text = f"{age // 60} min"
+        age_colour = "warning"
+    else:
+        age_text = f"{age // 60} min"
+        age_colour = "danger"
+
+    last_sample = db.get("last_sample")
+    last_sample_text = str(last_sample) if last_sample else "n/d"
+
+    return dbc.Row(
+        [
+            dbc.Col(make_card("Ultimo campione", last_sample_text, "measures_raw", age_colour), md=3),
+            dbc.Col(make_card("Età ultimo campione", age_text, "latenza acquisizione", age_colour), md=3),
+            dbc.Col(make_card("Record raw", f"{db.get('raw_rows'):,}".replace(",", "."), "misure istantanee", "primary"), md=3),
+            dbc.Col(make_card("Giorni storici", f"{db.get('daily_rows'):,}".replace(",", "."), "energy_daily", "info"), md=3),
+        ],
+        className="g-3",
+    )
+
+
+def disk_table():
+    rows = []
+
+    for item in get_disk_health():
+        if item["error"]:
+            rows.append(
+                html.Tr(
+                    [
+                        html.Td(item["path"]),
+                        html.Td("n/d"),
+                        html.Td("n/d"),
+                        html.Td("n/d"),
+                        html.Td(dbc.Badge(item["error"], color="danger")),
+                    ]
+                )
+            )
+            continue
+
+        pct_value = item["used_pct"]
+        if pct_value < 70:
+            colour = "success"
+        elif pct_value < 90:
+            colour = "warning"
+        else:
+            colour = "danger"
+
+        rows.append(
+            html.Tr(
+                [
+                    html.Td(item["path"]),
+                    html.Td(f"{item['total_gb']:.1f} GB"),
+                    html.Td(f"{item['used_gb']:.1f} GB"),
+                    html.Td(f"{item['free_gb']:.1f} GB"),
+                    html.Td(dbc.Badge(f"{pct_value:.1f}%", color=colour)),
+                ]
+            )
+        )
+
+    return dbc.Table(
+        [
+            html.Thead(
+                html.Tr(
+                    [
+                        html.Th("Percorso"),
+                        html.Th("Totale"),
+                        html.Th("Usato"),
+                        html.Th("Libero"),
+                        html.Th("Utilizzo"),
+                    ]
+                )
+            ),
+            html.Tbody(rows),
+        ],
+        bordered=True,
+        striped=True,
+        hover=True,
+        responsive=True,
+        className="mb-0",
+    )
+
+
+def backup_cards():
+    backup = get_backup_health()
+
+    if backup["error"]:
+        return dbc.Alert(f"Errore lettura backup: {backup['error']}", color="danger")
+
+    exists_colour = "success" if backup["exists"] else "danger"
+
+    return dbc.Row(
+        [
+            dbc.Col(make_card("Directory backup", "Presente" if backup["exists"] else "Mancante", backup["dir"], exists_colour), md=3),
+            dbc.Col(make_card("Backup presenti", str(backup["count"]), "file in archivio", "primary"), md=3),
+            dbc.Col(make_card("Dimensione totale", f"{backup['total_mb']:.1f} MB", "spazio occupato", "info"), md=3),
+            dbc.Col(make_card("Ultimo backup", backup["latest_mtime"] or "n/d", backup["latest_file"] or "nessun file", "secondary"), md=3),
+        ],
+        className="g-3",
+    )
+
+
+def system_info_table():
+    info = get_system_info()
+
+    load_text = "n/d"
+    if info["load_avg"]:
+        load_text = ", ".join(f"{x:.2f}" for x in info["load_avg"])
+
+    return dbc.Table(
+        [
+            html.Tbody(
+                [
+                    html.Tr([html.Th("Hostname"), html.Td(info["hostname"])]),
+                    html.Tr([html.Th("Sistema"), html.Td(info["system"])]),
+                    html.Tr([html.Th("Python"), html.Td(info["python"])]),
+                    html.Tr([html.Th("Uptime"), html.Td(info["uptime"])]),
+                    html.Tr([html.Th("Load average"), html.Td(load_text)]),
+                ]
+            )
+        ],
+        bordered=True,
+        striped=True,
+        hover=True,
+        responsive=True,
+        className="mb-0",
+    )
+
+
+def get_service_logs(service_name, lines=80):
+    allowed = set(SYSTEM_SERVICES.values())
+
+    if service_name not in allowed:
+        return "Servizio non valido."
+
+    result = run_command(
+        ["journalctl", "-u", service_name, "-n", str(lines), "--no-pager"],
+        timeout=8,
+    )
+
+    if result["ok"]:
+        return result["stdout"] or "Nessun log disponibile."
+
+    msg = result["stderr"] or result["stdout"] or "Errore sconosciuto."
+    return f"Impossibile leggere i log di {service_name}.\n\n{msg}"
+
+
+def run_backup_script():
+    script = "/opt/energydash-pro/scripts/backup.sh"
+
+    if not os.path.exists(script):
+        return False, f"Script backup non trovato: {script}"
+
+    result = run_command(["bash", script], timeout=120)
+
+    if result["ok"]:
+        return True, result["stdout"] or "Backup completato."
+
+    return False, result["stderr"] or result["stdout"] or "Backup fallito."
+
+
 # ---------------------------------------------------------------------
 # Layout
 # ---------------------------------------------------------------------
@@ -885,6 +1325,131 @@ def config_layout():
     )
 
 
+
+
+def system_layout():
+    service_options = [
+        {"label": label, "value": service}
+        for label, service in SYSTEM_SERVICES.items()
+    ]
+
+    default_service = "energydash-web.service"
+
+    return html.Div(
+        [
+            html.H2("Sistema"),
+            html.Div(
+                "Health check, servizi, backup, log e diagnostica.",
+                className="text-muted mb-3",
+            ),
+
+            dbc.ButtonGroup(
+                [
+                    dbc.Button("Home", href="/", color="secondary", outline=True, size="sm"),
+                    dbc.Button("Aggiorna", id="btn-system-refresh", color="primary", outline=True, size="sm"),
+                ],
+                className="mb-3",
+            ),
+
+            html.Div(id="system-refresh-alert"),
+
+            dbc.Card(
+                dbc.CardBody(
+                    [
+                        html.H4("Stato servizi", className="mb-3"),
+                        html.Div(id="system-services-table"),
+                    ]
+                ),
+                className="shadow-sm mb-3",
+            ),
+
+            dbc.Card(
+                dbc.CardBody(
+                    [
+                        html.H4("Health database", className="mb-3"),
+                        html.Div(id="system-db-health"),
+                    ]
+                ),
+                className="shadow-sm mb-3",
+            ),
+
+            dbc.Card(
+                dbc.CardBody(
+                    [
+                        html.H4("Storage", className="mb-3"),
+                        html.Div(id="system-disk-table"),
+                    ]
+                ),
+                className="shadow-sm mb-3",
+            ),
+
+            dbc.Card(
+                dbc.CardBody(
+                    [
+                        html.H4("Backup", className="mb-3"),
+                        html.Div(id="system-backup-cards"),
+                        html.Div(className="mt-3"),
+                        dbc.Button("Crea backup adesso", id="btn-run-backup", color="success", outline=False),
+                        html.Div(id="system-backup-result", className="mt-3"),
+                    ]
+                ),
+                className="shadow-sm mb-3",
+            ),
+
+            dbc.Card(
+                dbc.CardBody(
+                    [
+                        html.H4("Informazioni sistema", className="mb-3"),
+                        html.Div(id="system-info-table"),
+                    ]
+                ),
+                className="shadow-sm mb-3",
+            ),
+
+            dbc.Card(
+                dbc.CardBody(
+                    [
+                        html.H4("Log viewer", className="mb-3"),
+                        dbc.Row(
+                            [
+                                dbc.Col(
+                                    dcc.Dropdown(
+                                        id="system-log-service",
+                                        options=service_options,
+                                        value=default_service,
+                                        clearable=False,
+                                        style={"color": "#000"},
+                                    ),
+                                    md=6,
+                                ),
+                                dbc.Col(
+                                    dbc.Button("Ricarica log", id="btn-system-logs", color="secondary", outline=True),
+                                    md=3,
+                                ),
+                            ],
+                            className="mb-3",
+                        ),
+                        html.Pre(
+                            id="system-log-output",
+                            style={
+                                "backgroundColor": "#111",
+                                "color": "#ddd",
+                                "border": "1px solid #444",
+                                "padding": "12px",
+                                "maxHeight": "520px",
+                                "overflowY": "auto",
+                                "whiteSpace": "pre-wrap",
+                                "fontSize": "0.85rem",
+                            },
+                        ),
+                    ]
+                ),
+                className="shadow-sm mb-3",
+            ),
+        ]
+    )
+
+
 def simple_page(title, text):
     return html.Div(
         [
@@ -915,7 +1480,7 @@ def route(path):
     if path == "/config":
         return config_layout()
     if path == "/sistema":
-        return simple_page("Sistema", "Health check, servizi, backup e diagnostica.")
+        return system_layout()
     return home_layout()
 
 
@@ -1343,6 +1908,78 @@ def update_history(_, fields, state):
     )
 
     return options, fig, html.H5(title_text), summary
+
+
+
+
+# ---------------------------------------------------------------------
+# System callbacks
+# ---------------------------------------------------------------------
+
+@app.callback(
+    Output("system-services-table", "children"),
+    Output("system-db-health", "children"),
+    Output("system-disk-table", "children"),
+    Output("system-backup-cards", "children"),
+    Output("system-info-table", "children"),
+    Output("system-refresh-alert", "children"),
+    Input("refresh", "n_intervals"),
+    Input("btn-system-refresh", "n_clicks"),
+)
+def update_system_panel(_interval, _clicks):
+    return (
+        service_table(),
+        database_health_cards(),
+        disk_table(),
+        backup_cards(),
+        system_info_table(),
+        dbc.Alert(
+            f"Aggiornato: {datetime.now(LOCAL_TZ).strftime('%d/%m/%Y %H:%M:%S')}",
+            color="secondary",
+            className="py-2",
+        ),
+    )
+
+
+@app.callback(
+    Output("system-log-output", "children"),
+    Input("system-log-service", "value"),
+    Input("btn-system-logs", "n_clicks"),
+    Input("refresh", "n_intervals"),
+)
+def update_system_logs(service_name, _clicks, _interval):
+    if not service_name:
+        service_name = "energydash-web.service"
+
+    return get_service_logs(service_name, lines=80)
+
+
+@app.callback(
+    Output("system-backup-result", "children"),
+    Input("btn-run-backup", "n_clicks"),
+    prevent_initial_call=True,
+)
+def run_backup_from_ui(n_clicks):
+    ok, message = run_backup_script()
+
+    if ok:
+        return dbc.Alert(
+            [
+                html.H5("Backup completato"),
+                html.Pre(message, className="mb-0"),
+            ],
+            color="success",
+        )
+
+    return dbc.Alert(
+        [
+            html.H5("Backup non completato"),
+            html.Div("La dashboard gira con utente energydash: se mancano permessi, esegui il backup da shell oppure configuriamo sudo mirato."),
+            html.Pre(message, className="mb-0 mt-2"),
+        ],
+        color="danger",
+    )
+
 
 
 if __name__ == "__main__":

@@ -1003,21 +1003,85 @@ def run_backup_script():
 # ---------------------------------------------------------------------
 # Layout
 # ---------------------------------------------------------------------
+SIDEBAR_MODES = ["full", "compact", "hidden"]
 
+
+def load_sidebar_mode():
+    try:
+        return setting_get("ui.sidebar_mode", "full", "string")
+    except Exception:
+        return "full"
+
+
+def save_sidebar_mode(mode):
+    try:
+        setting_put(
+            "ui.sidebar_mode",
+            mode,
+            "string",
+            "Sidebar mode"
+        )
+    except Exception:
+        pass
+
+    return mode
 def sidebar():
     return dbc.Col(
-        dbc.Nav(
-            [
-                dbc.NavLink("Home", href="/", active="exact"),
-                dbc.NavLink("Live", href="/live", active="exact"),
-                dbc.NavLink("Storico", href="/storico", active="exact"),
-                dbc.NavLink("Report", href="/report", active="exact"),
-                dbc.NavLink("Configurazione", href="/config", active="exact"),
-                dbc.NavLink("Sistema", href="/sistema", active="exact"),
-            ],
-            vertical=True,
-            pills=True,
-        ),
+        [
+            dbc.ButtonGroup(
+                [
+                    dbc.Button(
+                        "◀",
+                        id="btn-sidebar-next",
+                        size="sm",
+                        color="secondary",
+                        outline=True,
+                    ),
+                    dbc.Button(
+                        "✕",
+                        id="btn-sidebar-hide",
+                        size="sm",
+                        color="secondary",
+                        outline=True,
+                    ),
+                ],
+                className="mb-2 w-100",
+            ),
+
+            html.Div(
+                id="sidebar-full",
+                children=dbc.Nav(
+                    [
+                        dbc.NavLink("Home", href="/", active="exact"),
+                        dbc.NavLink("Live", href="/live", active="exact"),
+                        dbc.NavLink("Storico", href="/storico", active="exact"),
+                        dbc.NavLink("Report", href="/report", active="exact"),
+                        dbc.NavLink("Configurazione", href="/config", active="exact"),
+                        dbc.NavLink("Sistema", href="/sistema", active="exact"),
+                    ],
+                    vertical=True,
+                    pills=True,
+                ),
+            ),
+
+            html.Div(
+                id="sidebar-compact",
+                children=dbc.Nav(
+                    [
+                        dbc.NavLink("H", href="/", active="exact"),
+                        dbc.NavLink("L", href="/live", active="exact"),
+                        dbc.NavLink("ST", href="/storico", active="exact"),
+                        dbc.NavLink("R", href="/report", active="exact"),
+                        dbc.NavLink("⚙️", href="/config", active="exact"),
+                        dbc.NavLink("SYS", href="/sistema", active="exact"),
+                    ],
+                    vertical=True,
+                    pills=True,
+                ),
+                style={"display": "none"},
+            ),
+        ],
+        id="sidebar-column",
         width=2,
         className="bg-dark p-3 min-vh-100",
     )
@@ -1046,12 +1110,34 @@ app.layout = dbc.Container(
     fluid=True,
     children=[
         dcc.Location(id="url"),
+        dbc.Button(
+            "☰",
+            id="floating-sidebar-button",
+            color="primary",
+            size="sm",
+            style={
+                "display": "none",
+                "position": "fixed",
+                "top": "10px",
+                "left": "10px",
+                "zIndex": 2000,
+            },
+        ),
         dcc.Interval(id="refresh", interval=5000, n_intervals=0),
         dcc.Store(id="history-state", data={"level": "year", "year": None, "month": None}),
+        dcc.Store(
+            id="sidebar-state",
+            data=load_sidebar_mode(),
+        ),
         dbc.Row(
             [
                 sidebar(),
-                dbc.Col(html.Div(id="page"), width=10, className="p-3"),
+                dbc.Col(
+                    html.Div(id="page"),
+                    id="content-column",
+                    width=10,
+                    className="p-3",
+                ),
             ]
         ),
     ],
@@ -1980,7 +2066,78 @@ def run_backup_from_ui(n_clicks):
         color="danger",
     )
 
+@app.callback(
+    Output("sidebar-state", "data"),
+    Input("btn-sidebar-next", "n_clicks"),
+    Input("btn-sidebar-hide", "n_clicks"),
+    Input("floating-sidebar-button", "n_clicks"),
+    State("sidebar-state", "data"),
+    prevent_initial_call=True,
+)
+def update_sidebar_state(_, __, ___, current):
 
+    current = current or "full"
+
+    trigger = ctx.triggered_id
+
+    if trigger == "btn-sidebar-hide":
+        return save_sidebar_mode("hidden")
+
+    if trigger == "floating-sidebar-button":
+        return save_sidebar_mode("full")
+
+    if current == "full":
+        return save_sidebar_mode("compact")
+
+    if current == "compact":
+        return save_sidebar_mode("hidden")
+
+    return save_sidebar_mode("full")
+@app.callback(
+    Output("sidebar-column", "width"),
+    Output("sidebar-column", "style"),
+    Output("sidebar-full", "style"),
+    Output("sidebar-compact", "style"),
+    Output("content-column", "width"),
+    Output("floating-sidebar-button", "style"),
+    Input("sidebar-state", "data"),
+)
+def apply_sidebar(mode):
+
+    if mode == "hidden":
+        return (
+            0,
+            {"display": "none"},
+            {"display": "none"},
+            {"display": "none"},
+            12,
+            {
+                "display": "block",
+                "position": "fixed",
+                "top": "10px",
+                "left": "10px",
+                "zIndex": 2000,
+            },
+        )
+
+    if mode == "compact":
+        return (
+            1,
+            {},
+            {"display": "none"},
+            {"display": "block"},
+            11,
+            {"display": "none"},
+        )
+
+    return (
+        2,
+        {},
+        {"display": "block"},
+        {"display": "none"},
+        10,
+        {"display": "none"},
+    )
 
 if __name__ == "__main__":
     app.run(

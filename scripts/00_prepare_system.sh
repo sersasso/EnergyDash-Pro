@@ -30,7 +30,9 @@ echo "Application home: $APP_HOME"
 # Copy application files
 mkdir -p "$APP_HOME/config"
 mkdir -p "$APP_HOME/database"
+mkdir -p "$APP_HOME/scripts"
 
+cp -a "$REPO_ROOT/scripts/." "$APP_HOME/scripts/"
 cp -a "$REPO_ROOT/src/." "$APP_HOME/"
 cp -a "$REPO_ROOT/config/." "$APP_HOME/config/"
 cp -a "$REPO_ROOT/database/." "$APP_HOME/database/"

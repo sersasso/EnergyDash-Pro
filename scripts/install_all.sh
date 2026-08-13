@@ -4,7 +4,7 @@ set -euo pipefail
 cd /opt/energydash-pro
 cp config/config.yaml /etc/energydash-pro/config.yaml
 chown root:energydash /etc/energydash-pro/config.yaml
-chmod 640 /etc/energydash-pro/config.yaml
+chmod 644 /etc/energydash-pro/config.yaml
 
 ./venv/bin/python init_db.py
 bash scripts/systemd_units.sh

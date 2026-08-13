@@ -1,0 +1,54 @@
+app:
+  name: "EnergyDash Pro"
+  timezone: "Europe/Rome"
+  language: "it"
+  base_url: "http://energydash.local"
+
+database:
+  url: "postgresql+psycopg://energydash:CHANGE_ME_STRONG_PASSWORD@localhost:5432/energydash"
+
+shelly:
+  url: "http://shellyproem50-8c4f00dc869c.stonet.lan/rpc/Shelly.GetStatus"
+  timeout_seconds: 3
+  interval_seconds: 5
+  production_channel: 0
+  consumption_channel: 1
+
+site:
+  name: "Casa Sergio"
+  pv_nominal_kwp: 6.0
+  latitude: 45.956
+  longitude: 12.660
+  tilt_degrees: 25
+  azimuth_degrees: 180
+
+ui:
+  theme: "dark"
+  live_granularity_seconds: 60
+  default_history_fields:
+    - production_wh
+    - consumption_wh
+    - grid_import_wh
+    - feed_in_wh
+    - self_consumption_wh
+
+notifications:
+  ntfy_enabled: false
+  ntfy_url: "https://ntfy.sh"
+  ntfy_topic: "CHANGE_ME_PRIVATE_TOPIC"
+  email_enabled: false
+
+thresholds:
+  shelly_offline_minutes: 3
+  high_consumption_w: 6000
+  production_zero_start: "10:00"
+  production_zero_end: "15:00"
+
+reports:
+  output_dir: "/var/lib/energydash-pro/reports"
+  monthly_enabled: true
+  annual_enabled: true
+
+backup:
+  output_dir: "/var/lib/energydash-pro/backup"
+  retention_days: 30

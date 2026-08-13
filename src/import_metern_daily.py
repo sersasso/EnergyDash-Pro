@@ -5,7 +5,7 @@ from pathlib import Path
 import yaml
 from sqlalchemy import create_engine, text
 
-CONFIG_FILE = "/etc/energydash-pro/config.yaml"
+CONFIG_FILE = "/etc/energydash-pro/config/config.yaml"
 IMPORT_DIR = Path("/var/lib/energydash-pro/import/metern")
 FILE_MAPPINGS = {
     "1Produzione*.csv": "production_wh",

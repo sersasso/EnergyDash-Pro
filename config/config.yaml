@@ -52,3 +52,12 @@ reports:
 backup:
   output_dir: "/var/lib/energydash-pro/backup"
   retention_days: 30
+
+auth:
+  api_key: "CHANGE_ME_API_KEY"
+
+retention:
+  raw_days: 180
+
+alerts:
+  cooldown_minutes: 30

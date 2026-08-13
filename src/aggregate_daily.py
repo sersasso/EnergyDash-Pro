@@ -5,7 +5,7 @@ import pandas as pd
 import yaml
 from sqlalchemy import create_engine, text
 
-CONFIG_FILE = "/etc/energydash-pro/config/config.yaml"
+CONFIG_FILE = "/etc/energydash-pro/config.yaml"
 
 def load_config():
     with open(CONFIG_FILE, "r") as f:

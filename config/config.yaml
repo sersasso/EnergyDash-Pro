@@ -61,3 +61,20 @@ retention:
 
 alerts:
   cooldown_minutes: 30
+
+gauge:
+  export_max_w: 6000
+  import_warning_w: 3000
+  import_max_w: 6000
+  height: 330
+  title: "Scambio rete"
+
+chart:
+  hours: 24
+  resample_seconds: 60
+  colors:
+    produzione: "#4C6FFF"
+    consumo: "#FF4B3E"
+    autoconsumo: "#00C896"
+    immissione: "#B36BFF"
+    prelievo: "#FF9F43"

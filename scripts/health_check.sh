@@ -36,3 +36,14 @@ journalctl -u energydash-collector -n 30 --no-pager || true
 echo
 echo "== Ultimi log alert =="
 journalctl -u energydash-alert -n 30 --no-pager || true
+
+
+echo
+echo "== Utente energydash e gruppi =="
+id energydash || true
+groups energydash || true
+
+echo
+echo "== Test accesso journal come energydash =="
+runuser -u energydash -- journalctl -u energydash-web.service -n 3 --no-pager || true
+

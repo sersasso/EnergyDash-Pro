@@ -17,6 +17,17 @@ apt install -y python3 python3-venv python3-pip python3-dev build-essential \
   nginx ufw logrotate ca-certificates openssl
 
 id -u "$APP_USER" >/dev/null 2>&1 || useradd --system --home "$APP_HOME" --shell /usr/sbin/nologin "$APP_USER"
+
+# Allow dashboard service user to read systemd journal logs.
+# Required by /sistema log viewer.
+if getent group systemd-journal >/dev/null 2>&1; then
+    usermod -aG systemd-journal "$APP_USER"
+fi
+
+# Some Debian/Ubuntu systems expose logs through adm as well.
+if getent group adm >/dev/null 2>&1; then
+    usermod -aG adm "$APP_USER"
+fi
 mkdir -p "$APP_HOME" "$APP_ETC" "$APP_DATA"/reports "$APP_DATA"/backup "$APP_DATA"/import/metern "$APP_LOG"
 chown -R "$APP_USER":"$APP_USER" "$APP_HOME" "$APP_DATA" "$APP_LOG"
 chmod 755 "$APP_ETC" "$APP_DATA" "$APP_LOG"
